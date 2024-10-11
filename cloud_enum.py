@@ -26,7 +26,6 @@ BANNER = '''
 
 '''
 
-LOGFILE = False
 
 def parse_arguments():
     """
@@ -64,11 +63,16 @@ def parse_arguments():
                         ' Default = 5')
 
     parser.add_argument('-ns', '--nameserver', type=str, action='store',
-                        default='8.8.8.8',
+                        default='1.1.1.1',
                         help='DNS server to use in brute-force.')
-
+    parser.add_argument('-nsf', '--nameserverfile', type=str, 
+                        help='Path to the file containing nameserver IPs')
     parser.add_argument('-l', '--logfile', type=str, action='store',
-                        help='Will APPEND found items to specified file.')
+                        help='Appends found items to specified file.')
+    parser.add_argument('-f', '--format', type=str, action='store',
+                        default='text',
+                        help='Format for log file (text,json,csv)'
+                             ' - default: text')
 
     parser.add_argument('--disable-aws', action='store_true',
                         help='Disable Amazon checks.')
@@ -86,8 +90,7 @@ def parse_arguments():
 
     # Ensure mutations file is readable
     if not os.access(args.mutations, os.R_OK):
-        print("[!] Cannot access mutations file: {}"
-              .format(args.mutations))
+        print(f"[!] Cannot access mutations file: {args.mutations}")
         sys.exit()
 
     # Ensure brute file is readable
@@ -102,7 +105,7 @@ def parse_arguments():
             sys.exit()
 
         # Parse keywords from input file
-        with open(args.keyfile) as infile:
+        with open(args.keyfile, encoding='utf-8') as infile:
             args.keyword = [keyword.strip() for keyword in infile]
 
     # Ensure log file is writeable
@@ -121,22 +124,28 @@ def parse_arguments():
             print("[!] Cannot write to log file, exiting")
             sys.exit()
 
+        # Set up logging format
+        if args.format not in ('text', 'json', 'csv'):
+            print("[!] Sorry! Allowed log formats: 'text', 'json', or 'csv'")
+            sys.exit()
         # Set the global in the utils file, where logging needs to happen
-        utils.init_logfile(args.logfile)
+        utils.init_logfile(args.logfile, args.format)
 
     return args
+
 
 def print_status(args):
     """
     Print a short pre-run status message
     """
-    print("Keywords:    {}".format(', '.join(args.keyword)))
+    print(f"Keywords:    {', '.join(args.keyword)}")
     if args.quickscan:
         print("Mutations:   NONE! (Using quickscan)")
     else:
-        print("Mutations:   {}".format(args.mutations))
-    print("Brute-list:  {}".format(args.brute))
+        print(f"Mutations:   {args.mutations}")
+    print(f"Brute-list:  {args.brute}")
     print("")
+
 
 def check_windows():
     """
@@ -151,6 +160,7 @@ def check_windows():
             print("[!] Yo, Windows user - if you want pretty colors, you can"
                   " install the colorama python package.")
 
+
 def read_mutations(mutations_file):
     """
     Read mutations file into memory for processing.
@@ -158,8 +168,9 @@ def read_mutations(mutations_file):
     with open(mutations_file, encoding="utf8", errors="ignore") as infile:
         mutations = infile.read().splitlines()
 
-    print("[+] Mutations list imported: {} items".format(len(mutations)))
+    print(f"[+] Mutations list imported: {len(mutations)} items")
     return mutations
+
 
 def clean_text(text):
     """
@@ -170,6 +181,15 @@ def clean_text(text):
     text_clean = banned_chars.sub('', text_lower)
 
     return text_clean
+
+
+def append_name(name, names_list):
+    """
+    Ensure strings stick to DNS label limit of 63 characters
+    """
+    if len(name) <= 63:
+        names_list.append(name)
+
 
 def build_names(base_list, mutations):
     """
@@ -182,25 +202,39 @@ def build_names(base_list, mutations):
         base = clean_text(base)
 
         # First, include with no mutations
-        names.append(base)
+        append_name(base, names)
 
         for mutation in mutations:
             # Clean mutation
             mutation = clean_text(mutation)
 
             # Then, do appends
-            names.append("{}{}".format(base, mutation))
-            names.append("{}.{}".format(base, mutation))
-            names.append("{}-{}".format(base, mutation))
+            append_name(f"{base}{mutation}", names)
+            append_name(f"{base}.{mutation}", names)
+            append_name(f"{base}-{mutation}", names)
 
             # Then, do prepends
-            names.append("{}{}".format(mutation, base))
-            names.append("{}.{}".format(mutation, base))
-            names.append("{}-{}".format(mutation, base))
+            append_name(f"{mutation}{base}", names)
+            append_name(f"{mutation}.{base}", names)
+            append_name(f"{mutation}-{base}", names)
 
-    print("[+] Mutated results: {} items".format(len(names)))
+    print(f"[+] Mutated results: {len(names)} items")
 
     return names
+
+def read_nameservers(file_path):
+    try:
+        with open(file_path, 'r') as file:
+            nameservers = [line.strip() for line in file if line.strip()]
+        if not nameservers:
+            raise ValueError("Nameserver file is empty")
+        return nameservers
+    except FileNotFoundError:
+        print(f"Error: File '{file_path}' not found.")
+        exit(1)
+    except ValueError as e:
+        print(e)
+        exit(1)
 
 def main():
     """
